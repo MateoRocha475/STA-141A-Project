@@ -1,0 +1,928 @@
+---
+title: "Course Project Final"
+author: "Mateo Rocha"
+date: "2025-03-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo=FALSE, include=FALSE}
+# libraries
+
+(library(dplyr))
+library(tinytex)
+library(tidyverse)
+library(ggplot2)
+library(caret)
+library(readr)
+library(glmnet)
+library(xgboost)
+library(pROC)
+library(plotly)
+library(gganimate)
+library(DT)
+```
+
+```{r echo= TRUE, eval=TRUE}
+# Get session info
+
+session=list()
+for(i in 1:18){
+  session[[i]]=readRDS(paste('./Data/session',i,'.rds',sep=''))
+  # print(session[[i]]$mouse_name)
+  # print(session[[i]]$date_exp)
+  }
+```
+
+# STA141A Course Project
+
+## Abstract:
+In this project we analyze a subset of data from a study conducted by Steinmetz et al. (2019). In the study, 39 sessions with several hundred trials were conducted with a total of ten mice. The mice would be shown visual stimuli with a left and right contrast, and would have to spin a wheel accordingly to choose the higher contrast, or if the contrast levels were equal a 50% chance to spin correctly. They would then be given a reward or penalty denoted as feedback, 1 being a success and -1 being failure. 
+
+## Intro:
+This course project analyzes 18 of the 39 sessions with 4 different mice. The goal is to explore the data, integrate the data, create an accurate prediction model that will tell us the feedback type (whether a success or failure occurs), and test the predictive model based on new data.
+
+## Exploratory Data Analysis:
+
+
+```{r, echo = FALSE}
+# Create Data Analysis Table
+
+data_anyl_tbl <- tibble('Session'= 1:18)
+
+# Mouse Tested during Session
+
+mouse_name_lst <- list()
+for (i in data_anyl_tbl$Session) {
+  mouse_name <- session[[i]]$mouse_name
+  mouse_name_lst[[i]] <- mouse_name
+}
+
+data_anyl_tbl <- data_anyl_tbl %>% add_column('Mouse Name' = unlist(mouse_name_lst))
+
+# Number of Trials per Session
+
+
+num_trials_lst <- list()
+
+for (i in data_anyl_tbl$Session) {
+  num_trials <- 0
+  num_trials <- length(session[[i]]$feedback_type)
+  num_trials_lst[[i]] <- num_trials
+}
+
+data_anyl_tbl <- data_anyl_tbl %>% add_column('Num Trials' = unlist(num_trials_lst))
+
+# Number of Neurons per Session
+
+num_neurons_lst <- list()
+
+for (i in data_anyl_tbl$Session) {
+  num_neurons <- 0
+  num_neurons <- length(session[[i]]$brain_area)
+  num_neurons_lst[[i]] <- num_neurons
+}
+
+data_anyl_tbl <- data_anyl_tbl %>% add_column('Num Neurons' = unlist(num_neurons_lst))
+
+# Success Rate per Session
+
+
+success_rate_lst <- list()
+
+for (i in data_anyl_tbl$Session) {
+  success_rate <- 0
+  success_rate <- sum(session[[i]]$feedback_type == 1) / data_anyl_tbl$`Num Trials`[i]
+  success_rate_lst[[i]] <- success_rate
+}
+
+data_anyl_tbl <- data_anyl_tbl %>% add_column('Success Rate' = unlist(success_rate_lst))
+```
+
+
+### Data Analysis Table Showing difference in Mice, Trials, Neurons and Success Rate among Sessions
+```{r, echo=FALSE}
+# Show Data Analysis Table 
+
+datatable(data_anyl_tbl, options = list(pageLength = 10, scrollX = TRUE), rownames = FALSE)
+```
+
+This gives a brief overview of the data based on Sessions 1 through 18, showing the mouse tested, number of trials, number of neurons, and the success rate of every session in our subset. In addition, here is the success rate of all of the session:
+```{r, echo=FALSE}
+# Overall Success Rate
+
+n_success = 0
+n_trial = 0
+for(i in 1:18){
+    tmp = session[[i]];
+    n_trial = n_trial + length(tmp$feedback_type);
+    n_success = n_success + sum(tmp$feedback_type == 1);
+}
+
+percent_str <- sprintf("%.2f%%", (n_success/n_trial) * 100)
+cat("\nSuccess Percentage among all trials is:", percent_str, "\n")
+```
+
+```{r, echo=FALSE}
+# Table of Data between different Mice and Success Rate
+
+mice_tbl <- tibble('Mouse Name' = c('Cori', 'Forrssman', 'Hench', 'Lederberg'))
+
+# Success Rate per Mouse
+
+n_Cori_session <- 0
+n_Cori_succ <- 0
+n_Forss_session <- 0
+n_Forss_succ <- 0
+n_Hench_session <- 0
+n_Hench_succ <- 0
+n_Leder_session <- 0
+n_Leder_succ <- 0
+
+for (i in 1:18) {
+  if (session[[i]]$mouse_name == 'Cori') {
+    n_Cori_session <- n_Cori_session + 1
+    n_Cori_succ <- n_Cori_succ + sum(session[[i]]$feedback_type == 1) / length(session[[i]]$feedback_type)
+  }
+  else if (session[[i]]$mouse_name == 'Forssmann') {
+    n_Forss_session <- n_Forss_session + 1
+    n_Forss_succ <- n_Forss_succ + sum(session[[i]]$feedback_type == 1) / length(session[[i]]$feedback_type)
+  }
+  else if (session[[i]]$mouse_name == 'Hench') {
+    n_Hench_session <- n_Hench_session + 1
+    n_Hench_succ <- n_Hench_succ + sum(session[[i]]$feedback_type == 1) / length(session[[i]]$feedback_type)
+  }
+  else{
+    n_Leder_session <- n_Leder_session + 1
+    n_Leder_succ <- n_Leder_succ + sum(session[[i]]$feedback_type == 1) / length(session[[i]]$feedback_type)
+  }
+}
+
+Corri_success_rate <- n_Cori_succ / n_Cori_session
+Forss_success_rate <- n_Forss_succ / n_Forss_session
+Hench_success_rate <- n_Hench_succ / n_Hench_session
+Leder_success_rate <- n_Leder_succ / n_Leder_session
+
+success_rate_per_mice <- c(Corri_success_rate, Forss_success_rate, Hench_success_rate, Leder_success_rate)
+
+mice_tbl <- mice_tbl %>% add_column('Success Rate' = success_rate_per_mice)
+
+# Success Rate based on contrast difference
+
+Cori_0_contrast_succ <- 0
+Cori_0.25_contrast_succ <- 0
+Cori_0.5_contrast_succ <- 0
+Cori_1_contrast_succ <- 0
+
+
+Forss_0_contrast_succ <- 0
+Forss_0.25_contrast_succ <- 0
+Forss_0.5_contrast_succ <- 0
+Forss_1_contrast_succ <- 0
+
+
+Hench_0_contrast_succ <- 0
+Hench_0.25_contrast_succ <- 0
+Hench_0.5_contrast_succ <- 0
+Hench_1_contrast_succ <- 0
+
+
+Leder_0_contrast_succ <- 0
+Leder_0.25_contrast_succ <- 0
+Leder_0.5_contrast_succ <- 0
+Leder_1_contrast_succ <- 0
+
+
+for (i in 1:18) {
+  n_feedback_obs <- length(session[[i]]$feedback_type)
+  n_0_diff <- 0
+  n_0_success <- 0
+  n_0.25_diff <- 0
+  n_0.25_success <- 0
+  n_0.5_diff <- 0
+  n_0.5_success <- 0
+  n_1_diff <- 0
+  n_1_success <- 0
+  for (m in 1:n_feedback_obs) {
+    if(session[[i]]$contrast_left[[m]] - session[[i]]$contrast_right[[m]] == 0){
+      n_0_diff <- n_0_diff + 1
+      if(session[[i]]$feedback_type[[m]] == 1){
+      n_0_success = n_0_success + 1
+      }
+    }
+    else if(abs(session[[i]]$contrast_left[[m]] - session[[i]]$contrast_right[[m]]) == 0.5){
+     n_0.5_diff <- n_0.5_diff + 1
+      if(session[[i]]$feedback_type[[m]] == 1){
+      n_0.5_success = n_0.5_success + 1
+      } 
+    }
+    else if(abs(session[[i]]$contrast_left[[m]] - session[[i]]$contrast_right[[m]]) == 1){
+     n_1_diff <- n_1_diff + 1
+      if(session[[i]]$feedback_type[[m]] == 1){
+      n_1_success = n_1_success + 1
+      } 
+    }
+    else{
+      n_0.25_diff <- n_0.25_diff + 1
+      if(session[[i]]$feedback_type[[m]] == 1){
+      n_0.25_success = n_0.25_success + 1
+    }
+    }
+  }
+  if (session[[i]]$mouse_name == 'Cori') {
+    Cori_0_contrast_succ <- Cori_0_contrast_succ + (n_0_success / n_0_diff)
+    Cori_0.25_contrast_succ <- Cori_0.25_contrast_succ + (n_0.25_success / n_0.25_diff)
+    Cori_0.5_contrast_succ <- Cori_0.5_contrast_succ + (n_0.5_success/ n_0.5_diff)
+    Cori_1_contrast_succ <- Cori_1_contrast_succ + (n_1_success / n_1_diff)
+  }
+  else if (session[[i]]$mouse_name == 'Forssmann') {
+    Forss_0_contrast_succ <- Forss_0_contrast_succ + (n_0_success / n_0_diff)
+    Forss_0.25_contrast_succ <- Forss_0.25_contrast_succ + (n_0.25_success / n_0.25_diff)
+    Forss_0.5_contrast_succ <- Forss_0.5_contrast_succ + (n_0.5_success/ n_0.5_diff)
+    Forss_1_contrast_succ <- Forss_1_contrast_succ + (n_1_success / n_1_diff)
+  }
+  else if (session[[i]]$mouse_name == 'Hench') {
+    Hench_0_contrast_succ <- Hench_0_contrast_succ + (n_0_success / n_0_diff)
+    Hench_0.25_contrast_succ <- Hench_0.25_contrast_succ + (n_0.25_success / n_0.25_diff)
+    Hench_0.5_contrast_succ <- Hench_0.5_contrast_succ + (n_0.5_success/ n_0.5_diff)
+    Hench_1_contrast_succ <- Hench_1_contrast_succ + (n_1_success / n_1_diff)
+  }
+  else{
+    Leder_0_contrast_succ <- Leder_0_contrast_succ + (n_0_success / n_0_diff)
+    Leder_0.25_contrast_succ <- Leder_0.25_contrast_succ + (n_0.25_success / n_0.25_diff)
+    Leder_0.5_contrast_succ <- Leder_0.5_contrast_succ + (n_0.5_success/ n_0.5_diff)
+    Leder_1_contrast_succ <- Leder_1_contrast_succ + (n_1_success / n_1_diff)
+  } 
+}
+
+Corri_0_succ_rate <- Cori_0_contrast_succ / n_Cori_session
+Forss_0_succ_rate <- Forss_0_contrast_succ / n_Forss_session
+Hench_0_succ_rate <- Hench_0_contrast_succ / n_Hench_session
+Leder_0_succ_rate <- Leder_0_contrast_succ / n_Leder_session
+
+contrast0_succ_rate_per_mice <- c(Corri_0_succ_rate, Forss_0_succ_rate, Hench_0_succ_rate, Leder_0_succ_rate)
+
+Corri_0.25_succ_rate <- Cori_0.25_contrast_succ / n_Cori_session
+Forss_0.25_succ_rate <- Forss_0.25_contrast_succ / n_Forss_session
+Hench_0.25_succ_rate <- Hench_0.25_contrast_succ / n_Hench_session
+Leder_0.25_succ_rate <- Leder_0.25_contrast_succ / n_Leder_session
+
+contrast0.25_succ_rate_per_mice <- c(Corri_0.25_succ_rate, Forss_0.25_succ_rate, Hench_0.25_succ_rate, Leder_0.25_succ_rate)
+
+Corri_0.5_succ_rate <- Cori_0.5_contrast_succ / n_Cori_session
+Forss_0.5_succ_rate <- Forss_0.5_contrast_succ / n_Forss_session
+Hench_0.5_succ_rate <- Hench_0.5_contrast_succ / n_Hench_session
+Leder_0.5_succ_rate <- Leder_0.5_contrast_succ / n_Leder_session
+
+contrast0.5_succ_rate_per_mice <- c(Corri_0.5_succ_rate, Forss_0.5_succ_rate, Hench_0.5_succ_rate, Leder_0.5_succ_rate)
+
+Corri_1_succ_rate <- Cori_1_contrast_succ / n_Cori_session
+Forss_1_succ_rate <- Forss_1_contrast_succ / n_Forss_session
+Hench_1_succ_rate <- Hench_1_contrast_succ / n_Hench_session
+Leder_1_succ_rate <- Leder_1_contrast_succ / n_Leder_session
+
+contrast1_succ_rate_per_mice <- c(Corri_1_succ_rate, Forss_1_succ_rate, Hench_1_succ_rate, Leder_1_succ_rate)
+
+mice_tbl <- mice_tbl %>% add_column('0 Contrast Diff Success Rate' = contrast0_succ_rate_per_mice)
+mice_tbl <- mice_tbl %>% add_column('0.25 Contrast Diff Success Rate' = contrast0.25_succ_rate_per_mice)
+mice_tbl <- mice_tbl %>% add_column('0.5 Contrast Diff Success Rate' = contrast0.5_succ_rate_per_mice)
+mice_tbl <- mice_tbl %>% add_column('1 Contrast Diff Success Rate' = contrast1_succ_rate_per_mice)
+```
+
+### How Differences in Mice affect Success Rate Overall & Success Rate Based on Contrast Difference
+```{r, echo=FALSE}
+# Success Rate of Each Mouse and their Success Rate based on the Difference in Contrast Levels
+
+datatable(mice_tbl, options = list(pageLength = 10, scrollX = TRUE), rownames = FALSE)
+```
+
+Based on this table we can see that different Mice have different success rates, with 'Cori' having the lowest success rate and 'Lederberg' having the highest success rate. In addition, this table shows that differences in contrast have an effect on success rate.
+
+### Success Rate Trend for Each Mouse Across Sessions and Trials
+```{r, echo=FALSE}
+# Scatter Plot with Smooth Lines to show trend of Success Rate for ecery trial based on Mouse
+
+mouse_success_rate_trend <- data.frame('Mouse Name' = unlist(mouse_name_lst), 'Session' = 1:18, 'Success Rate' = unlist(success_rate_lst))
+
+success_rate_trend_plot <- ggplot(data = mouse_success_rate_trend, aes(x = Session, y = Success.Rate, color = Mouse.Name)) +
+  geom_point() +
+  geom_smooth(method = lm, se = FALSE, alpha = 0.2) +
+  labs(title = 'Success Rate across Sessions based on Mouse',
+       x = 'Session Number',
+       y = 'Success Rate',
+       color = 'Mouse Name')
+
+ggplotly(success_rate_trend_plot)
+```
+
+We can see based on this plot that as sessions go on for each mouse, their individual success rate increases which shows that they are learning based on the reward or punishment based on feedback. Noticing the average success rate between each mouse, it seems odd that 'Cori' has such a low success rate compared to 'Lederberg'. From the overall data analysis table, we see that 'Lederberg' has more testing sessions than 'Cori' and could therefore lead to a higher success rate average.
+
+```{r, echo=FALSE}
+# Data Frame for Trials
+
+trial_datafr <- do.call(rbind, lapply(seq_along(session), function(i) {
+   data.frame(
+     mice_name = session[[i]]$mouse_name,
+     session_number = i,
+     trial = 1:length(session[[i]]$feedback_type),
+     feedback = session[[i]]$feedback_type,
+     brain_areas = length(unique(session[[i]]$brain_area))
+   )
+ }))
+
+# Average Spikes per trial
+
+avg_spike_lst <- list()
+
+for(i in 1:18){
+  for(m in 1:length(session[[i]]$feedback_type)){
+    avg_spike = mean(session[[i]]$spks[[m]])
+    avg_spike_lst = append(avg_spike_lst, avg_spike)
+  }
+}
+
+trial_datafr$`Avg Spikes` <- avg_spike_lst
+trial_datafr$`Avg Spikes` <- as.numeric(trial_datafr$`Avg Spikes`)
+
+# Plot of Feedback over Trials Based on Session
+
+feedback_trend_plot <- ggplot(data = trial_datafr, aes(x = trial, y = feedback)) +
+  geom_smooth(color = 'red') +
+  facet_wrap(~session_number) +
+  labs(title = 'Trend of Feedback over Trials for Each Session',
+       x = 'Trials',
+       y = 'Feedback')
+
+ggplotly(feedback_trend_plot)
+
+# Number of Trials per Session based on Mouse
+
+ggplot(data = trial_datafr, aes(x = session_number, fill = mice_name)) +
+  geom_bar() +
+  labs(title = 'Number of Trials per Session based on Mouse',
+       x = 'Session',
+       y = 'Number of Trials',
+       fill = 'Mouse Name')
+```
+
+Based on this data we can see that more sessions means more trials, which can possibly increase success rate among mice. 
+
+
+```{r, echo=FALSE}
+# Plot of Feedback over Trials Based on Mouse
+
+feedback_mouse_trend_plot <- ggplot(data = trial_datafr, aes(x = trial, y = feedback)) +
+  geom_smooth(aes(color = mice_name), method = "loess") +
+  facet_wrap(~mice_name) +
+  labs(title = 'Trend of Feedback over Trials for Each Mouse',
+       x = 'Trials',
+       y = 'Feedback',
+       color = 'Mouse Name')
+
+ggplotly(feedback_mouse_trend_plot)
+```
+
+
+
+ However, although across sessions we see success rate increase, we see that across trials success rate decreases over time. A theory could be the mice getting tired after hundreds of trials, and therefore we see a decline in success rate towards the later half of the trials.
+
+```{r, echo=FALSE}
+# Plot of Spikes over Trials Based on Session
+
+spike_trend_session_plot <- ggplot(data = trial_datafr, aes(x = trial, y = `Avg Spikes`)) +
+  geom_line() +
+  geom_smooth(color = 'red') +
+  facet_wrap(~session_number) +
+  labs(title = 'Trend of Average Spikes over Trials for Each Session',
+       x = 'Trials',
+       y = 'Average Spikes')
+
+ggplotly(spike_trend_session_plot)
+
+# Plot of Spikes over Trials Based on Mouse
+
+spike_trend_mouse_plot <- ggplot(data = trial_datafr, aes(x = trial, y = `Avg Spikes`)) +
+  geom_smooth(aes(color = mice_name), method = "loess") +
+  facet_wrap(~mice_name) +
+  labs(title = 'Trend of Average Spikes over Trials for Each Mouse',
+       x = 'Trials',
+       y = 'Average Spikes',
+       color = 'Mouse Name')
+
+ggplotly(spike_trend_mouse_plot)
+```
+
+
+In these plots we can see a direct correlation between success rate and average spikes per trial, giving us insight that the average spikes per trial is an important predictor to success rate for each mice.
+
+## Data Integration:
+
+```{r, echo=FALSE}
+# Creating Data to be used for prediction model. This already includes session number, trial number, mouse name, feedback, average spikes, and the number of brain areas
+
+data_int_df <- trial_datafr
+
+
+# Column for Left Contrast Value among trials
+left_contrast_lst <- list()
+
+for(i in 1:18){
+  for(m in 1:length(session[[i]]$feedback_type)){
+    left_contrast_val = session[[i]]$contrast_left[[m]]
+    left_contrast_lst = append(left_contrast_lst, left_contrast_val)
+  }
+}
+
+# Column for Right Contrast Value among trials
+right_contrast_lst <- list()
+
+for(i in 1:18){
+  for(m in 1:length(session[[i]]$feedback_type)){
+    right_contrast_val = session[[i]]$contrast_right[[m]]
+    right_contrast_lst = append(right_contrast_lst, right_contrast_val)
+  }
+}
+
+data_int_df$left_contrast <- left_contrast_lst
+data_int_df$right_contrast <- right_contrast_lst
+data_int_df$left_contrast <- as.numeric(data_int_df$left_contrast)
+data_int_df$right_contrast <- as.numeric(data_int_df$right_contrast)
+
+# Column for difference between left and right contrast 
+data_int_df$diff_in_contrast <- abs(data_int_df$left_contrast - data_int_df$right_contrast)
+
+# Dummy Variables to encode mice names
+
+dummy_mice <- dummyVars(~mice_name, data = data_int_df)
+hot_one_encode <- predict(dummy_mice, newdata = data_int_df)
+
+# Final Data Integration Table
+data_int_df_final <- cbind(data_int_df$session_number,
+                           data_int_df$trial,
+                           data_int_df$feedback,
+                           data_int_df$brain_areas,
+                           data_int_df$`Avg Spikes`,
+                           data_int_df$left_contrast,
+                           data_int_df$right_contrast,
+                           data_int_df$diff_in_contrast,
+                           hot_one_encode)
+
+data_int_df_final <- as.data.frame(data_int_df_final)
+colnames(data_int_df_final) <- c('session_num',
+                                 'trial_num',
+                                 'feedback_val',
+                                 'brain_areas',
+                                 'avg_spike',
+                                 'left_contrast',
+                                 'right_contrast',
+                                 'diff_in_contrast',
+                                 'Cori',
+                                 'Forssman',
+                                 'Hench',
+                                 'Lederberg')
+```
+
+
+### Integrated Data for Data Partition
+```{r, echo=FALSE}
+# View first few rows of the final data integration table
+
+datatable(data_int_df_final, options = list(pageLength = 10, scrollX = TRUE), rownames = FALSE)
+```
+
+I decided to integrate my data over trials, with each having a corresponding session number, feedback value, brain areas, average spikes, left contrast value, right contrast value, difference in contrast values, and each of the 4 mice. In my exploratory data analysis I showed how different mice, different contrast differences, and average spikes among trials and sessions can influence the feedback value (success rate). In addition to that data, I included brain areas, as the brain area data in our session data is correlated to spikes, since spikes represents neuron spikes, and brain area is where the neurons live. I also included left and right contrast since it relates to the difference in contrast values.
+
+## Predictive Modeling:
+ 
+```{r, echo = FALSE}
+
+# response variable
+response_var <- data_int_df_final$feedback_val
+
+# predictor variables
+X_data <- data_int_df_final[, !names(data_int_df_final) %in% "feedback_val"]
+
+# Creating train and test data
+# From Project Demo 3
+
+set.seed(123) # Helps us reproduce results
+trainIndex <- createDataPartition(response_var, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+train_df <- data_int_df_final[trainIndex, ]
+train_X <- X_data[trainIndex,]
+test_df <- data_int_df_final[-trainIndex, ]
+test_X <- X_data[-trainIndex,]
+
+train_feedback <- response_var[trainIndex]
+test_feedback <- response_var[-trainIndex]
+
+train_X <- as.matrix(train_X)
+test_X <- as.matrix(test_X)
+```
+
+
+### Cross Validation Lasso Data
+```{r}
+# Cross Validation Lasso
+cv_feedback_lasso <- cv.glmnet(train_X, train_feedback, alpha = 1)
+
+# Best Lambda
+print(cv_feedback_lasso$lambda.min)
+
+# Coefficients
+print(coef(cv_feedback_lasso, s = 'lambda.min'))
+
+# Correlation Matrix
+cor_matrix <- cor(train_X, train_feedback)
+print(cor_matrix)
+```
+
+Using my training data, I fit a cross_validation lasso model to find which predictors had a significant impact on feedback value. Based on the coefficients and correlation matrix, I decided the best predictors for my model were Average Spike, Left Contrast, Right Contrast and Difference in Contrast.
+
+```{r, echo=FALSE}
+# Trianing Final Data for Prediciton with better Predictors
+
+final_train_index_data <- data_int_df_final %>% select(feedback_val, avg_spike, right_contrast, left_contrast, diff_in_contrast)
+
+final_feedback_response_val <- final_train_index_data$feedback_val
+
+final_X_data <- final_train_index_data[, !names(final_train_index_data) %in% "feedback_val"] 
+
+final_trainIndex <- createDataPartition(final_feedback_response_val, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+final_train_df <- final_train_index_data[final_trainIndex, ]
+final_train_X <- final_X_data[final_trainIndex,]
+final_test_df <- final_train_index_data[-final_trainIndex, ]
+final_test_X <- final_X_data[-final_trainIndex,]
+
+train_feedback_v2 <- final_feedback_response_val[trainIndex]
+test_feedback_v2 <- final_feedback_response_val[-trainIndex]
+
+train_X_v2 <- as.matrix(final_train_X)
+test_X_v2 <- as.matrix(final_test_X)
+
+test_feedback_v2_factored <- factor(test_feedback_v2, levels = c(-1, 1))
+```
+
+Next I evaluated different prediction models to test for the highest accuracy. In the end I ended with xgboost since it gave me the highest accuracy, as well as the highest roc value.
+
+### xgboost Model
+```{r,echo=FALSE}
+train_feedback_v2_xgboost <- ifelse(train_feedback_v2 == -1, 0, 1)
+test_feedback_v2_xgboost <- ifelse(test_feedback_v2 == -1, 0, 1)
+```
+
+```{r}
+xgboost_mdl <- xgboost(data = train_X_v2, label = train_feedback_v2_xgboost, objective = "binary:logistic", nrounds=10)
+```
+
+```{r, echo=FALSE}
+# xgboost prediction
+
+xgboost_pred <- predict(xgboost_mdl, newdata = test_X_v2)
+predicted_xgboost <- as.numeric(ifelse(xgboost_pred > 0, 1, -1))
+xgboost_accuracy <- mean(predicted_xgboost == test_feedback_v2_xgboost)
+```
+#### xgboost Accuracy
+```{r}
+xgboost_accuracy
+```
+
+```{r, echo=FALSE}
+# xgboost prediction as a factor
+
+predicted_xgboost_feedback <- factor(predicted_xgboost, levels = c(-1, 1)) 
+```
+
+```{r}
+confusionMatrix(predicted_xgboost_feedback, test_feedback_v2_factored)
+```
+```{r, echo=FALSE}
+# xgboost auroc
+
+xgboost_auroc <- roc(test_feedback_v2_factored, xgboost_pred)
+```
+
+#### xgboost Area Under the Curve
+```{r}
+xgboost_auroc
+```
+
+ We are working with a large data sample given my data includes data from all trials across all sessions, xgboost is the best prediction model. Compared to other models such as Lasso and Linear Regression. Lasso although good for eliminating predictors with the lowest significance is prone to over-simplifying correlative variables. Linear Regression can over-fit the data when there are too many features, therefore this data is too large for the linear regression model. Both Lasso and Linear Regression yielded worse results as shown below:
+
+### Lasso Model
+```{r, echo=FALSE}
+# Cross Validation Lasso to get best lambda
+cv_lasso <- cv.glmnet(train_X_v2, train_feedback_v2, alpha = 1)
+
+lasso_lambda_best <- cv_lasso$lambda.min
+```
+
+```{r}
+lasso_mdl <- glmnet(train_X_v2, train_feedback_v2, alpha = 1, lambda = lasso_lambda_best)
+```
+
+```{r, echo=FALSE}
+# lasso prediction
+
+lasso_mdl_pred <- predict(lasso_mdl, s = 'lambda.min', newx = test_X_v2)
+lasso_predictions <- predict(lasso_mdl, newx = test_X_v2)
+predicted_lasso_feedback <- as.numeric(ifelse(lasso_predictions > 0, 1, -1))
+lasso_accuracy <- mean(predicted_lasso_feedback == test_feedback_v2)
+```
+
+#### Lasso Accuracy
+```{r}
+lasso_accuracy
+```
+
+```{r, echo=FALSE}
+# lasso auroc
+
+lasso_auroc <- roc(test_feedback_v2_factored, lasso_predictions)
+```
+
+#### Lasso Area Under the Curve
+```{r}
+lasso_auroc
+```
+
+
+### Linear Regression Model
+```{r, echo=FALSE}
+train_feedback_v2_lm <-  ifelse(train_feedback_v2 == -1, 0, 1)
+```
+```{r}
+lm_mdl <- glm(train_feedback_v2_lm ~ ., data = as.data.frame(train_X_v2), family = 'binomial')
+```
+```{r, echo=FALSE}
+# linear regression model prediction
+lm_mdl_pred <- predict(lm_mdl, as.data.frame(test_X_v2), type = 'response')
+
+predicted_lm_feedback <- as.numeric(ifelse(lm_mdl_pred > 0, 1, -1))
+lm_accuracy <- mean(predicted_lm_feedback == test_feedback_v2)
+```
+
+#### Linear Regression Accuracy
+```{r}
+lm_accuracy
+```
+```{r, echo=FALSE}
+#linear regression auroc
+
+lm_auroc <- roc(test_feedback_v2_factored, lm_mdl_pred)
+```
+
+#### Linear Regression Area Under the Curve
+```{r}
+lm_auroc
+```
+
+Lasso had an accuracy of 70.7 with an area under the curve of 0.505, while Linear Regression had an accuracy of 70.7% with an area under the curve of 0.494. This is worse compared to xgboost with an accuracy of 70.7% and an area under the curve of 0.525.
+
+
+#### ROC Plot
+```{r, echo=FALSE}
+
+plot(xgboost_roc <- roc(test_feedback_v2_factored, xgboost_pred),
+     col = "darkblue", 
+     lwd = 2,
+     main = "ROC Curves", 
+     xlim = c(0, 1),
+     ylim = c(0, 1))
+lines(lasso_roc <- roc(test_feedback_v2_factored, lasso_predictions),
+      col = "red",
+      lwd = 2)
+lines(lm_roc <- roc(test_feedback_v2_factored, lm_mdl_pred),
+      col = "forestgreen",
+      lwd = 2)
+
+legend("topright", legend = c("xgboost", "Lasso", "Logistic Regression"),
+       col = c("darkblue", "red", "forestgreen"), lwd = 2)
+```
+
+Based on what we see in the plot, xgboost model rises more rapidly to the top left meaning that it's better for distingushing success or failure based on the feedback data versus Linear Regression and Lasso.
+
+## Prediction Performance on Test Sets:
+
+```{r echo=FALSE, eval=TRUE}
+
+test=list()
+for(i in 1:2){
+  test[[i]]=readRDS(paste('./test/test',i,'.rds',sep=''))
+  }
+
+# Data Frame for Trials
+
+test_trials_datafr <- do.call(rbind, lapply(seq_along(test), function(i) {
+   data.frame(
+     mice_name = test[[i]]$mouse_name,
+     session_number = i,
+     trial = 1:length(test[[i]]$feedback_type),
+     feedback = test[[i]]$feedback_type,
+     brain_areas = length(unique(test[[i]]$brain_area))
+   )
+ }))
+
+
+test_data_avg_spike_lst <- list()
+
+for(i in 1:2){
+  for(m in 1:length(test[[i]]$feedback_type)){
+    avg_spike = mean(test[[i]]$spks[[m]])
+    test_data_avg_spike_lst = append(test_data_avg_spike_lst, avg_spike)
+  }
+}
+
+test_trials_datafr$`Avg Spikes` <- test_data_avg_spike_lst
+test_trials_datafr$`Avg Spikes` <- as.numeric(test_trials_datafr$`Avg Spikes`)
+
+test_data_int_df <- test_trials_datafr
+
+
+test_data_left_contrast_lst <- list()
+
+for(i in 1:2){
+  for(m in 1:length(test[[i]]$feedback_type)){
+    left_contrast_val = test[[i]]$contrast_left[[m]]
+    test_data_left_contrast_lst = append(test_data_left_contrast_lst, left_contrast_val)
+  }
+}
+
+
+test_data_right_contrast_lst <- list()
+
+for(i in 1:2){
+  for(m in 1:length(test[[i]]$feedback_type)){
+    right_contrast_val = session[[i]]$contrast_right[[m]]
+    test_data_right_contrast_lst = append(test_data_right_contrast_lst, right_contrast_val)
+  }
+}
+
+test_data_int_df$left_contrast <- test_data_left_contrast_lst
+test_data_int_df$right_contrast <- test_data_right_contrast_lst
+test_data_int_df$left_contrast <- as.numeric(test_data_int_df$left_contrast)
+test_data_int_df$right_contrast <- as.numeric(test_data_int_df$right_contrast)
+
+test_data_int_df$diff_in_contrast <- abs(test_data_int_df$left_contrast - test_data_int_df$right_contrast)
+
+# Dummy Variables
+
+test_dummy_mice <- dummyVars(~mice_name, data = test_data_int_df)
+test_hot_one_encode <- predict(dummy_mice, newdata = test_data_int_df)
+
+
+test_data_int_df_final <- cbind(test_data_int_df$session_number,
+                           test_data_int_df$trial,
+                           test_data_int_df$feedback,
+                           test_data_int_df$brain_areas,
+                           test_data_int_df$`Avg Spikes`,
+                           test_data_int_df$left_contrast,
+                           test_data_int_df$right_contrast,
+                           test_data_int_df$diff_in_contrast,
+                           test_hot_one_encode)
+
+test_data_int_df_final <- as.data.frame(test_data_int_df_final)
+colnames(test_data_int_df_final) <- c('session_num',
+                                 'trial_num',
+                                 'feedback_val',
+                                 'brain_areas',
+                                 'avg_spike',
+                                 'left_contrast',
+                                 'right_contrast',
+                                 'diff_in_contrast',
+                                 'Cori',
+                                 'Lederberg')
+```
+
+```{r, echo = FALSE}
+# create test data for session 1 and 18 sample
+
+session1_test_data <- test_data_int_df_final %>% filter(session_num == 1)
+session18_test_data <- test_data_int_df_final %>% filter(session_num == 2)
+```
+
+### Session 1 and 18 Test Data Sample
+```{r, echo=FALSE}
+datatable(session1_test_data, options = list(pageLength = 10, scrollX = TRUE), rownames = FALSE)
+datatable(session18_test_data, options = list(pageLength = 10, scrollX = TRUE), rownames = FALSE)
+```
+
+
+```{r, echo=FALSE}
+# create predictor and response varaibles for session 1 test data
+
+test1_data_X <- session1_test_data %>% select( avg_spike, right_contrast, left_contrast, diff_in_contrast)
+
+actual_feedback_val1 <- session1_test_data$feedback_val
+```
+
+### xgboost Model on Session 1 Test Data Sample
+```{r}
+prediction_mdl_test1_data <- predict(xgboost_mdl, as.matrix(test1_data_X))
+```
+
+```{r, echo=FALSE}
+# Predict test data for session 1 prediction model
+
+predicted_test1 <- as.numeric(ifelse(prediction_mdl_test1_data > 0, 1, -1))
+test1_data_accuracy <- mean(predicted_test1 == actual_feedback_val1)
+```
+
+#### xgboost Accuracy
+```{r}
+test1_data_accuracy
+```
+```{r, echo=FALSE}
+# predicted session 1 test data made factor-able
+
+predicted_test1 <- factor(predicted_test1, levels = c(-1, 1)) 
+```
+```{r}
+confusionMatrix(predicted_test1, factor(actual_feedback_val1, levels = c(-1, 1)))
+```
+```{r, echo=FALSE}
+# session 1 test data auroc
+
+test1_data_auroc <- roc(factor(actual_feedback_val1, levels = c(-1, 1)), prediction_mdl_test1_data)
+```
+
+#### xgboost Area Under the Curve
+```{r}
+test1_data_auroc
+```
+
+
+Using my xgboost model on the test data for session 1 provided, we see that we have a 72% accuracy on predicting the model, with a 0.661 area under the curve. 
+
+
+```{r, echo=FALSE}
+# selecting predictors and response varaibles for session 18 test data
+
+test18_data_X <- session18_test_data %>% select( avg_spike, right_contrast, left_contrast, diff_in_contrast)
+
+actual_feedback_val18 <- session18_test_data$feedback_val
+
+```
+### xgboost Model on Session 18 Test Data Sample
+```{r}
+prediction_mdl_test18_data <- predict(xgboost_mdl, as.matrix(test18_data_X))
+```
+```{r, echo=FALSE}
+# prediction on prediction model for session 18 test data
+
+predicted_test18 <- as.numeric(ifelse(prediction_mdl_test18_data > 0, 1, -1))
+test18_data_accuracy <- mean(predicted_test18 == actual_feedback_val18)
+```
+#### xgboost Accuracy
+```{r}
+test18_data_accuracy
+```
+```{r,echo=FALSE}
+# factor-able predicted session 18 test data
+
+predicted_test18 <- factor(predicted_test18, levels = c(-1, 1)) 
+```
+```{r}
+confusionMatrix(predicted_test18, factor(actual_feedback_val18, levels = c(-1, 1)))
+```
+```{r, echo=FALSE}
+# session 18 test data auroc
+
+test18_data_auroc <- roc(factor(actual_feedback_val18, levels = c(-1, 1)), prediction_mdl_test18_data)
+```
+#### xgboost Area Under the Curve
+```{r}
+test18_data_auroc
+```
+
+
+Using my xgboost model on the test data for session 1 provided, we see that we have a 73% accuracy on predicting the model, with a 0.635 area under the curve. 
+
+
+## Discussion:
+Although my prediction model isn't perfect, its still had a decent accuracy around 70%. Unfortunately my area under the curve is very low, and I could probably build a better model using linear regression on smaller pieces of data similar to the size of the test data. Overall I believe that based on the size of my trial partition, examining predictors across all trials that my prediction model is decent.
+
+## Acknowledgements:
+
+Use of ChatGPT:
+https://chatgpt.com/share/67d61485-d078-800f-9c01-434e570528d8 (Data Frame for Trial Data)
+https://chatgpt.com/share/67d894e0-f8b8-800f-b45e-d9450e460b3c (Formatting)
+https://chatgpt.com/share/67d89531-c424-800f-bb8f-3877da44bcee (AUROC)
+https://chatgpt.com/share/67d8956d-3e48-800f-af6d-203cea3a20d5 (Encoding)
+https://chatgpt.com/share/67d895ad-b184-800f-8247-9ef24ae4dc1f (Choosing Model)
+https://chatgpt.com/share/67d8ac6c-bd64-800f-8cf9-1b01ad8b524b (Improving HTML File)
+https://chatgpt.com/share/67d8b064-869c-800f-bc7e-ed1439d0ff36 (ROC Plots)
+Bug Fixes:
+https://chatgpt.com/share/67d89506-5b94-800f-98d6-55125797ebfb
+https://chatgpt.com/share/67d895ee-d384-800f-af0a-0a967221f57d
+
+## Apendix:
+```{r, ref.label=knitr::all_labels(), eval = FALSE, echo=TRUE}
+
+```
