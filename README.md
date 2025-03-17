@@ -1,2 +1,4 @@
 # STA-141A-Project
-Course Project for STA 141A Class at Davis, Winter 2025
+## Course Project for STA 141A Class at Davis, Winter 2025
+## Mateo Rocha
+In this project we analyze a subset of data from a study conducted by Steinmetz et al. (2019). In the study, 39 sessions with several hundred trials were conducted with a total of ten mice. The mice would be shown visual stimuli with a left and right contrast, and would have to spin a wheel accordingly to choose the higher contrast, or if the contrast levels were equal a 50% chance to spin correctly. They would then be given a reward or penalty denoted as feedback, 1 being a success and -1 being failure. This course project analyzes 18 of the 39 sessions with 4 different mice. The goal is to explore the data, integrate the data, create an accurate prediction model that will tell us the feedback type (whether a success or failure occurs), and test the predictive model based on new data.
